@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NEXTERM — Crypto Market Terminal</title>
+
+  <!-- ================================================================
+       NEXTERM — Single-file Vanilla JS Crypto Dashboard
+       Data: n.exchange public API (nexchange.io/api/v1/)
+       No external deps, no frameworks, no CDN imports.
+  ================================================================ -->
+
+  <style>
+    /* ================================================================
+       1. RESET & CUSTOM PROPERTIES
+    ================================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0a0e13;   /* near-black background          */
+      --panel:   #0f1923;   /* dark card / panel surface      */
+      --border:  #1a3040;   /* dark-teal card borders         */
+      --accent:  #00ff88;   /* neon green — positive / live   */
+      --red:     #ff3b5c;   /* red — negative / error         */
+      --muted:   #8899aa;   /* muted gray — labels            */
+      --text:    #c8d8e8;   /* primary text                   */
+      --font:    'Courier New', Courier, monospace;
+    }
+
+    html { height: 100%; }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100%;
+
+      /* CSS-only scanline texture (repeating horizontal rules) */
+      background-image:
+        repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 3px,
+          rgba(0, 0, 0, 0.13) 3px,
+          rgba(0, 0, 0, 0.13) 4px
+        ),
+        /* subtle dot-grid overlay */
+        linear-gradient(rgba(0, 255, 136, 0.016) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 255, 136, 0.016) 1px, transparent 1px);
+      background-size: 100% 4px, 60px 60px, 60px 60px;
+      background-attachment: fixed;
+    }
+
+    /* ================================================================
+       2. HEADER BAR
+    ================================================================ */
+    #header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 13px 24px;
+      background: rgba(15, 25, 35, 0.97);
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    /* Brand / logo */
+    .brand-name {
+      font-size: 1.35rem;
+      font-weight: bold;
+      color: var(--accent);
+      letter-spacing: 5px;
+      text-shadow:
+        0 0 10px rgba(0, 255, 136, 0.7),
+        0 0 28px rgba(0, 255, 136, 0.25);
+    }
+    .brand-tag {
+      font-size: 0.58rem;
+      color: var(--muted);
+      letter-spacing: 3px;
+      margin-top: 2px;
+    }
+
+    /* Right-side header widgets */
+    .hdr-right {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      flex-wrap: wrap;
+    }
+
+    /* "LIVE" indicator */
+    .live-badge {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 0.68rem;
+      color: var(--accent);
+      letter-spacing: 3px;
+      border: 1px solid rgba(0, 255, 136, 0.3);
+      background: rgba(0, 255, 136, 0.05);
+      padding: 4px 12px;
+      border-radius: 2px;
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: livePulse 2s ease-in-out infinite;
+    }
+    @keyframes livePulse {
+      0%, 100% { opacity: 1;   box-shadow: 0 0 8px var(--accent); }
+      50%       { opacity: 0.3; box-shadow: 0 0 2px var(--accent); }
+    }
+
+    #clock {
+      font-size: 1rem;
+      color: var(--text);
+      letter-spacing: 2px;
+      font-variant-numeric: tabular-nums;
+    }
+    #lastRefresh {
+      font-size: 0.59rem;
+      color: var(--muted);
+      letter-spacing: 1px;
+    }
+
+    /* ================================================================
+       3. PAIR SELECTOR ROW
+    ================================================================ */
+    #pairSelectorOuter {
+      background: rgba(15, 25, 35, 0.85);
+      border-bottom: 1px solid var(--border);
+      padding: 9px 24px;
+      overflow-x: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    #pairSelectorOuter::-webkit-scrollbar { height: 3px; }
+    #pairSelectorOuter::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    #pairSelector {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: max-content;
+    }
+
+    .selector-lbl {
+      font-size: 0.58rem;
+      color: var(--muted);
+      letter-spacing: 2px;
+      margin-right: 4px;
+      flex-shrink: 0;
+    }
+
+    .pair-pill {
+      padding: 5px 13px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--font);
+      font-size: 0.7rem;
+      letter-spacing: 1px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      white-space: nowrap;
+      outline: none;
+    }
+    .pair-pill:hover {
+      border-color: rgba(0, 255, 136, 0.5);
+      color: var(--accent);
+      background: rgba(0, 255, 136, 0.05);
+    }
+    .pair-pill.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(0, 255, 136, 0.1);
+      box-shadow: 0 0 10px rgba(0, 255, 136, 0.15);
+    }
+
+    /* ================================================================
+       4. MAIN CONTENT AREA
+    ================================================================ */
+    #main {
+      padding: 20px 24px 8px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* ================================================================
+       5. SPOTLIGHT PANEL
+    ================================================================ */
+    #spotlight {
+      display: grid;
+      grid-template-columns: 1fr 1.3fr;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      margin-bottom: 22px;
+      overflow: hidden;
+    }
+
+    /* Left column — prices & stats */
+    .sp-left {
+      padding: 22px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      border-right: 1px solid var(--border);
+    }
+    #spPairName {
+      font-size: 0.65rem;
+      color: var(--muted);
+      letter-spacing: 4px;
+    }
+    #spPrice {
+      font-size: 2.8rem;
+      line-height: 1;
+      color: var(--text);
+      letter-spacing: 1px;
+      font-variant-numeric: tabular-nums;
+      transition: color 0.25s;
+    }
+    #spChange {
+      font-size: 1rem;
+      font-weight: bold;
+      letter-spacing: 2px;
+      min-height: 1.3em;
+    }
+
+    /* stats grids */
+    .sp-stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .sp-spread-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .stat { display: flex; flex-direction: column; gap: 4px; }
+    .stat-lbl {
+      font-size: 0.56rem;
+      color: var(--muted);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .stat-val {
+      font-size: 0.82rem;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Right column — chart */
+    .sp-right {
+      padding: 18px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .chart-lbl {
+      font-size: 0.58rem;
+      color: var(--muted);
+      letter-spacing: 3px;
+    }
+    #spChart {
+      flex: 1;
+      width: 100%;
+      min-height: 120px;
+      display: block;
+      overflow: visible;
+    }
+
+    /* ================================================================
+       6. SECTION HEADER
+    ================================================================ */
+    .sec-hdr {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .sec-title {
+      font-size: 0.62rem;
+      color: var(--muted);
+      letter-spacing: 3px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .sec-title::before {
+      content: '';
+      display: inline-block;
+      width: 18px;
+      height: 1px;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+
+    /* ================================================================
+       7. MARKET GRID
+    ================================================================ */
+    #marketGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+      gap: 13px;
+    }
+
+    /* ================================================================
+       8. MARKET CARD
+    ================================================================ */
+    .mcard {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 15px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.25s, transform 0.2s;
+    }
+    /* accent top-line */
+    .mcard::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--border);
+      transition: background 0.25s;
+    }
+    .mcard:hover { border-color: rgba(0, 255, 136, 0.28); transform: translateY(-1px); }
+    .mcard:hover::before { background: rgba(0, 255, 136, 0.45); }
+
+    /* flash on price update */
+    @keyframes flashUp {
+      0%   { background: rgba(0, 255, 136, 0.18); border-color: rgba(0, 255, 136, 0.55); }
+      100% { background: var(--panel);             border-color: var(--border); }
+    }
+    @keyframes flashDown {
+      0%   { background: rgba(255, 59, 92, 0.18); border-color: rgba(255, 59, 92, 0.55); }
+      100% { background: var(--panel);             border-color: var(--border); }
+    }
+    .mcard.flash-up   { animation: flashUp   0.75s ease forwards; }
+    .mcard.flash-down { animation: flashDown 0.75s ease forwards; }
+
+    .card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .card-pair-main { font-size: 0.98rem; color: var(--text); letter-spacing: 2px; }
+    .card-pair-raw  { font-size: 0.56rem; color: var(--muted); letter-spacing: 1px; margin-top: 3px; }
+
+    /* % change badge */
+    .chg-badge {
+      font-size: 0.7rem;
+      font-weight: bold;
+      letter-spacing: 1px;
+      padding: 3px 8px;
+      border-radius: 2px;
+      white-space: nowrap;
+    }
+    .chg-badge.positive { color: var(--accent); background: rgba(0, 255, 136, 0.1); border: 1px solid rgba(0, 255, 136, 0.28); }
+    .chg-badge.negative { color: var(--red);    background: rgba(255, 59, 92, 0.1); border: 1px solid rgba(255, 59, 92, 0.28); }
+    .chg-badge.neutral  { color: var(--muted);  background: rgba(136,153,170, 0.1); border: 1px solid rgba(136,153,170, 0.25); }
+
+    .card-price { font-size: 1.25rem; color: var(--text); letter-spacing: 1px; margin-bottom: 9px; font-variant-numeric: tabular-nums; }
+
+    .card-meta { display: flex; gap: 12px; margin-bottom: 9px; }
+    .card-meta-item { display: flex; flex-direction: column; gap: 2px; }
+    .card-meta-lbl { font-size: 0.53rem; color: var(--muted); letter-spacing: 1px; }
+    .card-meta-val { font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+
+    /* mini sparkline */
+    .card-spark { width: 100%; height: 50px; display: block; overflow: visible; }
+
+    /* error badge */
+    .err-badge {
+      position: absolute;
+      bottom: 8px; right: 8px;
+      font-size: 0.53rem;
+      letter-spacing: 1px;
+      color: var(--red);
+      background: rgba(255, 59, 92, 0.12);
+      border: 1px solid rgba(255, 59, 92, 0.4);
+      padding: 2px 6px;
+      border-radius: 2px;
+    }
+
+    /* utility */
+    .positive { color: var(--accent); }
+    .negative { color: var(--red); }
+    .neutral  { color: var(--muted); }
+
+    /* ================================================================
+       9. LOADING OVERLAY
+    ================================================================ */
+    #loadingOverlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      z-index: 9999;
+      transition: opacity 0.5s ease;
+    }
+    #loadingOverlay.hidden { opacity: 0; pointer-events: none; }
+
+    .lo-brand {
+      font-size: 2.2rem;
+      color: var(--accent);
+      letter-spacing: 8px;
+      text-shadow: 0 0 24px rgba(0, 255, 136, 0.7), 0 0 48px rgba(0, 255, 136, 0.2);
+    }
+    /* animated progress bar */
+    .lo-bar {
+      width: 220px;
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      overflow: hidden;
+    }
+    .lo-bar-fill {
+      height: 100%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      animation: loSlide 1.4s ease-in-out infinite;
+    }
+    @keyframes loSlide {
+      0%   { width: 0%;   margin-left: 0%;    }
+      50%  { width: 55%;  margin-left: 22%;   }
+      100% { width: 0%;   margin-left: 100%;  }
+    }
+    .lo-text {
+      font-size: 0.72rem;
+      color: var(--accent);
+      letter-spacing: 6px;
+      animation: loBlink 0.9s step-end infinite;
+    }
+    @keyframes loBlink {
+      0%, 100% { opacity: 1;   }
+      50%       { opacity: 0.1; }
+    }
+    #loSub { font-size: 0.58rem; color: var(--muted); letter-spacing: 3px; }
+
+    /* ================================================================
+       10. FOOTER
+    ================================================================ */
+    #footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 13px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 0.6rem;
+      color: var(--muted);
+      letter-spacing: 1px;
+      margin-top: 20px;
+    }
+    #footer a { color: var(--accent); text-decoration: none; }
+    #footer a:hover { text-shadow: 0 0 8px var(--accent); }
+    #countdown { color: var(--muted); }
+
+    /* ================================================================
+       11. RESPONSIVE BREAKPOINTS
+    ================================================================ */
+    @media (max-width: 860px) {
+      #spotlight { grid-template-columns: 1fr; }
+      .sp-left   { border-right: none; border-bottom: 1px solid var(--border); }
+      #spPrice   { font-size: 2rem; }
+    }
+    @media (max-width: 600px) {
+      #main { padding: 14px 14px 6px; }
+      .sp-left, .sp-right { padding: 14px 16px; }
+      #header { padding: 10px 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ================================================================
+     LOADING OVERLAY — shown until first data fetch completes
+================================================================ -->
+<div id="loadingOverlay">
+  <div class="lo-brand">NEXTERM</div>
+  <div class="lo-bar"><div class="lo-bar-fill"></div></div>
+  <div class="lo-text">LOADING...</div>
+  <div id="loSub">CONNECTING TO MARKET DATA</div>
+</div>
+
+<!-- ================================================================
+     HEADER BAR
+================================================================ -->
+<header id="header">
+  <div>
+    <div class="brand-name">NEXTERM</div>
+    <div class="brand-tag">CRYPTO MARKET TERMINAL</div>
+  </div>
+  <div class="hdr-right">
+    <div class="live-badge"><div class="live-dot"></div>LIVE</div>
+    <div id="clock">--:--:--</div>
+    <div id="lastRefresh">LAST UPDATE: --</div>
+  </div>
+</header>
+
+<!-- ================================================================
+     PAIR SELECTOR ROW
+================================================================ -->
+<div id="pairSelectorOuter">
+  <div id="pairSelector">
+    <span class="selector-lbl">PAIRS:</span>
+    <!-- Pills injected by JS -->
+  </div>
+</div>
+
+<!-- ================================================================
+     MAIN CONTENT
+================================================================ -->
+<div id="main">
+
+  <!-- SPOTLIGHT PANEL -->
+  <div id="spotlight">
+    <div class="sp-left">
+      <div id="spPairName">SELECT A PAIR</div>
+      <div id="spPrice">---</div>
+      <div id="spChange" class="neutral">---</div>
+      <div class="sp-stats-row">
+        <div class="stat">
+          <span class="stat-lbl">24H HIGH</span>
+          <span class="stat-val positive" id="spHigh">---</span>
+        </div>
+        <div class="stat">
+          <span class="stat-lbl">24H LOW</span>
+          <span class="stat-val negative" id="spLow">---</span>
+        </div>
+        <div class="stat">
+          <span class="stat-lbl">24H VOLUME</span>
+          <span class="stat-val" id="spVol">---</span>
+        </div>
+      </div>
+      <div class="sp-spread-row">
+        <div class="stat">
+          <span class="stat-lbl">BID</span>
+          <span class="stat-val" id="spBid">---</span>
+        </div>
+        <div class="stat">
+          <span class="stat-lbl">ASK</span>
+          <span class="stat-val" id="spAsk">---</span>
+        </div>
+      </div>
+    </div>
+    <div class="sp-right">
+      <div class="chart-lbl">24H PRICE CHART — OHLCV CLOSE</div>
+      <svg id="spChart" viewBox="0 0 500 140" preserveAspectRatio="none">
+        <text x="250" y="78" text-anchor="middle" fill="#8899aa"
+          font-family="Courier New" font-size="11" letter-spacing="2">NO DATA</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- MARKET GRID -->
+  <div class="sec-hdr">
+    <div class="sec-title">MARKET OVERVIEW</div>
+    <div class="sec-title" id="pairCount">-- PAIRS</div>
+  </div>
+  <div id="marketGrid">
+    <!-- Cards injected by JS -->
+  </div>
+
+</div><!-- /#main -->
+
+<!-- ================================================================
+     FOOTER
+================================================================ -->
+<footer id="footer">
+  <span>
+    Powered by&nbsp;<a href="https://n.exchange" target="_blank" rel="noopener noreferrer">n.exchange</a>
+    &nbsp;·&nbsp;
+    API:&nbsp;<a href="https://nexchange.io/api/v1/" target="_blank" rel="noopener noreferrer">nexchange.io/api/v1</a>
+  </span>
+  <span id="countdown">REFRESHING IN 15s</span>
+</footer>
+
+<!-- ================================================================
+     JAVASCRIPT — all logic in one block, no external deps
+================================================================ -->
+<script>
+'use strict';
+
+/* ================================================================
+   CONFIG — tweak these to change behaviour
+================================================================ */
+const CFG = {
+  API:          'https://nexchange.io/api/v1',
+  MAX_PAIRS:    12,             // how many pairs to track
+  REFRESH_SECS: 15,             // ticker auto-refresh interval
+  OHLCV_INTV:   '1h',          // OHLCV candle interval
+  OHLCV_PTS:    24,             // number of candles to use for sparkline
+  /* Well-known pairs to prioritise when selecting from /market/ */
+  PREFERRED: [
+    'BTCUSDT','ETHUSDT','BTCETH','LTCBTC','XRPBTC',
+    'BNBBTC','ADABTC','DOTBTC','XLMBTC','LINKBTC',
+    'UNIBTC','SOLUSDT','DOGEUSDT','TRXBTC','LTCUSDT',
+  ],
+};
+
+/* ================================================================
+   STATE — single mutable object
+================================================================ */
+const S = {
+  pairs:        [],   // [{pair, base, quote}]
+  tickers:      {},   // pair -> { data, error }
+  ohlcv:        {},   // pair -> number[] (close prices, oldest first)
+  selectedPair: null,
+  countdown:    CFG.REFRESH_SECS,
+  timers:       { refresh: null, countdown: null },
+};
+
+/* ================================================================
+   SECTION 1 — UTILITY FUNCTIONS
+================================================================ */
+
+/** Safe parse float → number or null */
+function pf(v) {
+  const n = parseFloat(v);
+  return isFinite(n) ? n : null;
+}
+
+/** Format a price number with appropriate decimal precision */
+function fmtPrice(v) {
+  const n = pf(v);
+  if (n === null) return '---';
+  if (n >= 10000) return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (n >= 1)     return n.toFixed(4);
+  if (n >= 0.01)  return n.toFixed(6);
+  return n.toFixed(8);
+}
+
+/** Format a volume number with K / M / B suffix */
+function fmtVol(v) {
+  const n = pf(v);
+  if (n === null) return '---';
+  if (n >= 1e9)   return (n / 1e9).toFixed(3) + 'B';
+  if (n >= 1e6)   return (n / 1e6).toFixed(3) + 'M';
+  if (n >= 1e3)   return (n / 1e3).toFixed(2) + 'K';
+  return n.toFixed(4);
+}
+
+/** Percentage change from open to close */
+function pctChg(open, close) {
+  if (!open || open === 0) return null;
+  return ((close - open) / Math.abs(open)) * 100;
+}
+
+/** Returns { text, cls } for a percentage change value */
+function fmtPct(pct) {
+  if (pct === null || !isFinite(pct)) return { text: '—', cls: 'neutral' };
+  const sign  = pct >= 0 ? '+' : '';
+  const arrow = pct >= 0 ? '▲' : '▼';
+  return {
+    text: `${arrow} ${sign}${pct.toFixed(2)}%`,
+    cls:  pct >= 0 ? 'positive' : 'negative',
+  };
+}
+
+/** HH:MM:SS string from a Date */
+function fmtTime(d) {
+  return [d.getHours(), d.getMinutes(), d.getSeconds()]
+    .map(n => String(n).padStart(2, '0')).join(':');
+}
+
+/**
+ * Normalize raw ticker API response into a flat object.
+ * Handles both { ticker: { last, bid, ask, ... } } and direct flat shapes.
+ */
+function normTicker(raw) {
+  if (!raw) return null;
+  const t = raw.ticker ?? raw;
+  return {
+    last: pf(t.last   ?? t.price   ?? t.close),
+    bid:  pf(t.bid),
+    ask:  pf(t.ask),
+    high: pf(t.high   ?? t.high_24h),
+    low:  pf(t.low    ?? t.low_24h),
+    vol:  pf(t.volume ?? t.volume_24h ?? t.vol),
+  };
+}
+
+/** Return the normalised volume for a pair (for sorting) */
+function pairVol(pair) {
+  return normTicker(S.tickers[pair]?.data)?.vol ?? 0;
+}
+
+/* ================================================================
+   SECTION 2 — SVG SPARKLINE GENERATOR
+   All charts are pure inline SVG — no canvas, no libraries.
+================================================================ */
+
+/**
+ * Build an SVG sparkline string from an array of price values.
+ *
+ * Uses cubic Bézier segments for a smooth, elegant curve.
+ *
+ * @param {number[]} values   Array of prices (oldest first)
+ * @param {number}   W        SVG viewBox width
+ * @param {number}   H        SVG viewBox height
+ * @param {object}   opts
+ * @param {boolean}  opts.fill   Draw area gradient fill beneath the line
+ * @param {number}   opts.pad    Internal padding in SVG units
+ * @param {number}   opts.sw     Stroke width
+ * @returns {string}  SVG inner HTML (to be placed inside <svg>)
+ */
+function buildSparkline(values, W, H, { fill = false, pad = 6, sw = 1.5 } = {}) {
+  if (!values || values.length < 2) {
+    return `<text x="${W / 2}" y="${H / 2 + 4}" text-anchor="middle"
+      fill="#8899aa" font-family="Courier New" font-size="9"
+      letter-spacing="1">NO DATA</text>`;
+  }
+
+  const min   = Math.min(...values);
+  const max   = Math.max(...values);
+  const range = max - min || Math.abs(min) * 0.01 || 1;
+  const n     = values.length;
+
+  // Map each value to {x, y} SVG coordinates
+  const pts = values.map((v, i) => ({
+    x: pad + (i / (n - 1)) * (W - pad * 2),
+    y: (H - pad) - ((v - min) / range) * (H - pad * 2),
+  }));
+
+  const isUp  = values[n - 1] >= values[0];
+  const color = isUp ? '#00ff88' : '#ff3b5c';
+
+  // Unique IDs to avoid SVG conflicts when multiple sparklines coexist
+  const uid     = `s${Math.random().toString(36).slice(2, 8)}`;
+  const filtId  = `f${uid}`;
+  const gradId  = `g${uid}`;
+
+  // Smooth cubic Bézier path through all points
+  // Each segment: C midX,prevY midX,currY currX,currY
+  function bezierD(points) {
+    let d = `M ${points[0].x.toFixed(2)},${points[0].y.toFixed(2)}`;
+    for (let i = 1; i < points.length; i++) {
+      const p = points[i - 1];
+      const c = points[i];
+      const mx = ((p.x + c.x) / 2).toFixed(2);
+      d += ` C ${mx},${p.y.toFixed(2)} ${mx},${c.y.toFixed(2)} ${c.x.toFixed(2)},${c.y.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  const linePath = bezierD(pts);
+  const last     = pts[pts.length - 1];
+  const baseY    = (H - pad / 2).toFixed(2);
+
+  let svg = `<defs>
+    <filter id="${filtId}" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>`;
+
+  if (fill) {
+    svg += `
+    <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="${color}" stop-opacity="0.38"/>
+      <stop offset="88%"  stop-color="${color}" stop-opacity="0.02"/>
+    </linearGradient>`;
+  }
+  svg += `</defs>`;
+
+  // Area fill beneath the line (spotlight only)
+  if (fill) {
+    const areaPath = `${linePath} L ${last.x.toFixed(2)},${baseY} L ${pts[0].x.toFixed(2)},${baseY} Z`;
+    svg += `<path d="${areaPath}" fill="url(#${gradId})" stroke="none"/>`;
+  }
+
+  // Main price line
+  svg += `<path d="${linePath}" fill="none" stroke="${color}"
+    stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"
+    filter="url(#${filtId})"/>`;
+
+  // Terminal dot — glowing circle at the latest price
+  svg += `<circle cx="${last.x.toFixed(2)}" cy="${last.y.toFixed(2)}"
+    r="${fill ? 3.5 : 2.2}" fill="${color}" filter="url(#${filtId})"/>`;
+
+  // Subtle base-line ticks for the spotlight chart
+  if (fill) {
+    svg += `
+    <line x1="${pts[0].x.toFixed(2)}" y1="${(H - 3).toFixed(2)}"
+          x2="${pts[0].x.toFixed(2)}" y2="${H}"
+          stroke="${color}" stroke-width="1" opacity="0.35"/>
+    <line x1="${last.x.toFixed(2)}" y1="${(H - 3).toFixed(2)}"
+          x2="${last.x.toFixed(2)}" y2="${H}"
+          stroke="${color}" stroke-width="1" opacity="0.35"/>`;
+  }
+
+  return svg;
+}
+
+/* ================================================================
+   SECTION 3 — API LAYER
+================================================================ */
+
+/** Generic fetch + JSON parse, throws on HTTP error */
+async function apiFetch(path) {
+  const res = await fetch(CFG.API + path, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status} — ${path}`);
+  return res.json();
+}
+
+/** Fetch and normalise the full market list from /market/ */
+async function fetchMarkets() {
+  const raw  = await apiFetch('/market/');
+  const list = Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []);
+  return list
+    .filter(m => m && (m.pair ?? m.name ?? m.ticker_id))
+    .map(m => ({
+      pair:  m.pair  ?? m.name ?? m.ticker_id,
+      base:  m.base  ?? m.base_currency  ?? '',
+      quote: m.quote ?? m.quote_currency ?? '',
+    }));
+}
+
+/** Fetch ticker for one pair — never throws, returns { pair, data, error } */
+async function fetchTicker(pair) {
+  try {
+    const data = await apiFetch(`/market/${pair}/ticker/`);
+    return { pair, data, error: null };
+  } catch (e) {
+    return { pair, data: null, error: e.message };
+  }
+}
+
+/** Fetch OHLCV close prices for one pair — never throws */
+async function fetchOHLCV(pair) {
+  try {
+    const raw     = await apiFetch(`/market/${pair}/ohlcv/?interval=${CFG.OHLCV_INTV}`);
+    const candles = Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []);
+    const closes  = candles
+      .slice(-CFG.OHLCV_PTS)
+      .map(c => {
+        // Support both array [ts,o,h,l,close,vol] and object formats
+        if (Array.isArray(c)) return pf(c[4]);
+        return pf(c.close ?? c.c ?? null);
+      })
+      .filter(v => v !== null && v > 0);
+    return { pair, closes };
+  } catch (_) {
+    return { pair, closes: [] };
+  }
+}
+
+/* ================================================================
+   SECTION 4 — LIVE CLOCK
+================================================================ */
+function startClock() {
+  const el = document.getElementById('clock');
+  function tick() { el.textContent = fmtTime(new Date()); }
+  tick();
+  setInterval(tick, 1000);
+}
+
+/* ================================================================
+   SECTION 5 — UI RENDERING
+================================================================ */
+
+/** Rebuild the pill row from S.pairs */
+function renderPills() {
+  const sel = document.getElementById('pairSelector');
+  sel.querySelectorAll('.pair-pill').forEach(p => p.remove());
+  S.pairs.forEach(({ pair, base, quote }) => {
+    const btn = document.createElement('button');
+    btn.className  = 'pair-pill' + (pair === S.selectedPair ? ' active' : '');
+    btn.textContent = (base && quote) ? `${base}/${quote}` : pair;
+    btn.dataset.pair = pair;
+    btn.addEventListener('click', () => selectPair(pair));
+    sel.appendChild(btn);
+  });
+}
+
+/** Toggle active styling on the correct pill */
+function setActivePill(pair) {
+  document.querySelectorAll('.pair-pill').forEach(b => {
+    b.classList.toggle('active', b.dataset.pair === pair);
+  });
+}
+
+/** Update every field in the spotlight panel for the selected pair */
+function renderSpotlight(pair) {
+  const meta    = S.pairs.find(p => p.pair === pair) ?? {};
+  const display = (meta.base && meta.quote) ? `${meta.base} / ${meta.quote}` : pair;
+
+  document.getElementById('spPairName').textContent = display;
+
+  const tr = S.tickers[pair];
+  const t  = normTicker(tr?.data);
+
+  // Handle error state
+  if (!t || tr?.error) {
+    document.getElementById('spPrice').textContent  = 'ERROR';
+    document.getElementById('spChange').textContent = tr?.error ?? '—';
+    document.getElementById('spChange').className   = 'negative';
+    ['spHigh','spLow','spVol','spBid','spAsk'].forEach(id => {
+      document.getElementById(id).textContent = '---';
+    });
+    return;
+  }
+
+  document.getElementById('spPrice').textContent = fmtPrice(t.last);
+  document.getElementById('spHigh').textContent  = fmtPrice(t.high);
+  document.getElementById('spLow').textContent   = fmtPrice(t.low);
+  document.getElementById('spVol').textContent   = fmtVol(t.vol);
+  document.getElementById('spBid').textContent   = fmtPrice(t.bid);
+  document.getElementById('spAsk').textContent   = fmtPrice(t.ask);
+
+  // Price change % — derived from first OHLCV close vs current last
+  const closes = S.ohlcv[pair] ?? [];
+  let pct = null;
+  if (closes.length >= 2 && t.last !== null) {
+    pct = pctChg(closes[0], t.last);
+  }
+  const { text, cls } = fmtPct(pct);
+  const chgEl = document.getElementById('spChange');
+  chgEl.textContent = text;
+  chgEl.className   = cls;
+
+  // Sparkline
+  document.getElementById('spChart').innerHTML =
+    buildSparkline(closes, 500, 140, { fill: true, pad: 14, sw: 2 });
+}
+
+/**
+ * Build or update a single market card DOM element.
+ * Returns { card, isNew } so the caller knows whether to append it.
+ */
+function buildCard({ pair, base, quote }) {
+  const safeId = `card_${pair.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  let   card   = document.getElementById(safeId);
+  const isNew  = !card;
+
+  if (isNew) {
+    card           = document.createElement('div');
+    card.id        = safeId;
+    card.className = 'mcard';
+    card.addEventListener('click', () => selectPair(pair));
+  }
+
+  const prevPrice  = pf(card.dataset.lastPrice ?? null);
+  const tr         = S.tickers[pair];
+  const t          = normTicker(tr?.data);
+  const closes     = S.ohlcv[pair] ?? [];
+  const pairLabel  = (base && quote) ? `${base}/${quote}` : pair;
+
+  // Error state
+  if (!t || tr?.error) {
+    card.innerHTML = `
+      <div class="card-top">
+        <div>
+          <div class="card-pair-main">${pairLabel}</div>
+          <div class="card-pair-raw">${pair}</div>
+        </div>
+      </div>
+      <div style="font-size:0.68rem;color:var(--muted);margin-top:8px;">DATA UNAVAILABLE</div>
+      <div class="err-badge">ERR</div>`;
+    return { card, isNew };
+  }
+
+  // Compute % change
+  let pct = null;
+  if (closes.length >= 2 && t.last !== null) {
+    pct = pctChg(closes[0], t.last);
+  }
+  const { text: chgText, cls: chgCls } = fmtPct(pct);
+
+  // Mini sparkline (last 20 candles, no fill)
+  const spark = buildSparkline(closes.slice(-20), 200, 50, { fill: false, pad: 4, sw: 1.5 });
+
+  card.innerHTML = `
+    <div class="card-top">
+      <div>
+        <div class="card-pair-main">${pairLabel}</div>
+        <div class="card-pair-raw">${pair}</div>
+      </div>
+      <div class="chg-badge ${chgCls}">${chgText}</div>
+    </div>
+    <div class="card-price">${fmtPrice(t.last)}</div>
+    <div class="card-meta">
+      <div class="card-meta-item">
+        <span class="card-meta-lbl">HIGH</span>
+        <span class="card-meta-val positive">${fmtPrice(t.high)}</span>
+      </div>
+      <div class="card-meta-item">
+        <span class="card-meta-lbl">LOW</span>
+        <span class="card-meta-val negative">${fmtPrice(t.low)}</span>
+      </div>
+      <div class="card-meta-item">
+        <span class="card-meta-lbl">VOL</span>
+        <span class="card-meta-val">${fmtVol(t.vol)}</span>
+      </div>
+    </div>
+    <svg class="card-spark" viewBox="0 0 200 50"
+         preserveAspectRatio="none">${spark}</svg>`;
+
+  // Flash highlight on price change
+  if (!isNew && prevPrice !== null && t.last !== null && t.last !== prevPrice) {
+    card.classList.remove('flash-up', 'flash-down');
+    void card.offsetWidth;  // force style reflow so animation restarts
+    card.classList.add(t.last > prevPrice ? 'flash-up' : 'flash-down');
+    setTimeout(() => card.classList.remove('flash-up', 'flash-down'), 800);
+  }
+
+  card.dataset.lastPrice = t.last ?? '';
+  return { card, isNew };
+}
+
+/** Render / update the full market grid, sorted by 24h volume desc */
+function renderGrid() {
+  const grid = document.getElementById('marketGrid');
+
+  const sorted = [...S.pairs].sort((a, b) => pairVol(b.pair) - pairVol(a.pair));
+
+  document.getElementById('pairCount').textContent = `${sorted.length} PAIRS`;
+
+  sorted.forEach(meta => {
+    const { card, isNew } = buildCard(meta);
+    if (isNew) grid.appendChild(card);
+  });
+}
+
+/** Select a pair: update pill + spotlight */
+function selectPair(pair) {
+  S.selectedPair = pair;
+  setActivePill(pair);
+  renderSpotlight(pair);
+}
+
+/* ================================================================
+   SECTION 6 — COUNTDOWN TIMER
+================================================================ */
+function startCountdown() {
+  clearInterval(S.timers.countdown);
+  S.countdown    = CFG.REFRESH_SECS;
+  const el       = document.getElementById('countdown');
+  el.textContent = `REFRESHING IN ${S.countdown}s`;
+
+  S.timers.countdown = setInterval(() => {
+    S.countdown = Math.max(0, S.countdown - 1);
+    el.textContent = `REFRESHING IN ${S.countdown}s`;
+    if (S.countdown === 0) clearInterval(S.timers.countdown);
+  }, 1000);
+}
+
+/* ================================================================
+   SECTION 7 — DATA REFRESH (tickers only, OHLCV refreshes on load)
+================================================================ */
+async function refreshTickers() {
+  const results = await Promise.all(S.pairs.map(({ pair }) => fetchTicker(pair)));
+  results.forEach(({ pair, data, error }) => {
+    S.tickers[pair] = { data, error };
+  });
+  document.getElementById('lastRefresh').textContent = `LAST UPDATE: ${fmtTime(new Date())}`;
+  renderGrid();
+  if (S.selectedPair) renderSpotlight(S.selectedPair);
+}
+
+/* ================================================================
+   SECTION 8 — INITIALISATION
+================================================================ */
+async function init() {
+  startClock();
+
+  const loSub  = document.getElementById('loSub');
+  const loText = document.querySelector('.lo-text');
+
+  try {
+    /* ── 1. Fetch market list ────────────────────────────────── */
+    loSub.textContent = 'FETCHING MARKET LIST…';
+    const markets = await fetchMarkets();
+    if (!markets.length) throw new Error('No markets returned from API');
+
+    /* Prioritise well-known pairs; fill remaining slots alphabetically */
+    const prefSet  = new Set(CFG.PREFERRED);
+    const ordered  = [
+      ...markets.filter(m => prefSet.has(m.pair)),
+      ...markets.filter(m => !prefSet.has(m.pair)),
+    ].slice(0, CFG.MAX_PAIRS);
+
+    S.pairs = ordered;
+
+    /* ── 2. Parallel fetch: tickers + OHLCV ─────────────────── */
+    loSub.textContent = `LOADING ${S.pairs.length} PAIRS IN PARALLEL…`;
+    const pairIds = S.pairs.map(p => p.pair);
+
+    const [tickerResults, ohlcvResults] = await Promise.all([
+      Promise.all(pairIds.map(fetchTicker)),
+      Promise.all(pairIds.map(fetchOHLCV)),
+    ]);
+
+    tickerResults.forEach(({ pair, data, error }) => {
+      S.tickers[pair] = { data, error };
+    });
+    ohlcvResults.forEach(({ pair, closes }) => {
+      S.ohlcv[pair] = closes;
+    });
+
+    /* ── 3. Render UI ────────────────────────────────────────── */
+    renderPills();
+    renderGrid();
+
+    /* Auto-select first pair for the spotlight */
+    if (S.pairs.length > 0) selectPair(S.pairs[0].pair);
+
+    /* ── 4. Stamp last-refresh time ──────────────────────────── */
+    document.getElementById('lastRefresh').textContent =
+      `LAST UPDATE: ${fmtTime(new Date())}`;
+
+    /* ── 5. Start auto-refresh loop ──────────────────────────── */
+    startCountdown();
+    S.timers.refresh = setInterval(async () => {
+      await refreshTickers();
+      startCountdown();
+    }, CFG.REFRESH_SECS * 1000);
+
+  } catch (err) {
+    /* Fatal error — keep overlay visible with a message */
+    console.error('[NEXTERM] Initialisation failed:', err);
+    loText.textContent    = 'ERROR';
+    loText.style.color    = '#ff3b5c';
+    loText.style.animation = 'none';
+    loSub.textContent     = `FAILED: ${err.message}`;
+    loSub.style.color     = '#ff3b5c';
+    return;
+  }
+
+  /* Fade out and remove the loading overlay */
+  const overlay = document.getElementById('loadingOverlay');
+  overlay.classList.add('hidden');
+  setTimeout(() => overlay.remove(), 600);
+}
+
+/* ── Kick everything off ──────────────────────────────────────── */
+init();
+</script>
+</body>
+</html>
