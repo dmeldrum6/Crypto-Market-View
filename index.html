@@ -7,7 +7,7 @@
 
   <!-- ================================================================
        NEXTERM — Single-file Vanilla JS Crypto Dashboard
-       Data: Binance public API (api.binance.com/api/v3/)
+       Data: CoinGecko public API (api.coingecko.com/api/v3/)
        No external deps, no frameworks, no CDN imports.
   ================================================================ -->
 
@@ -594,9 +594,9 @@
 ================================================================ -->
 <footer id="footer">
   <span>
-    Powered by&nbsp;<a href="https://www.binance.com" target="_blank" rel="noopener noreferrer">Binance</a>
+    Powered by&nbsp;<a href="https://www.coingecko.com" target="_blank" rel="noopener noreferrer">CoinGecko</a>
     &nbsp;·&nbsp;
-    API:&nbsp;<a href="https://api.binance.com/api/v3/" target="_blank" rel="noopener noreferrer">api.binance.com/api/v3</a>
+    API:&nbsp;<a href="https://api.coingecko.com/api/v3/" target="_blank" rel="noopener noreferrer">api.coingecko.com/api/v3</a>
   </span>
   <span id="countdown">REFRESHING IN 15s</span>
 </footer>
@@ -611,18 +611,27 @@
    CONFIG — tweak these to change behaviour
 ================================================================ */
 const CFG = {
-  API:          'https://api.binance.com',
+  API:          'https://api.coingecko.com/api/v3',
   MAX_PAIRS:    12,             // how many pairs to track
-  REFRESH_SECS: 15,             // ticker auto-refresh interval
-  OHLCV_INTV:   '1h',          // OHLCV candle interval
+  REFRESH_SECS: 60,             // ticker auto-refresh interval (CoinGecko free ~30 req/min)
   OHLCV_PTS:    24,             // number of candles to use for sparkline
-  /* Well-known pairs to prioritise when selecting from /market/ */
-  PREFERRED: [
-    'BTCUSDT','ETHUSDT','BTCETH','LTCBTC','XRPBTC',
-    'BNBBTC','ADABTC','DOTBTC','XLMBTC','LINKBTC',
-    'UNIBTC','SOLUSDT','DOGEUSDT','TRXBTC','LTCUSDT',
-  ],
 };
+
+/* Hardcoded pair list with CoinGecko IDs — edit to add/remove coins */
+const PAIRS = [
+  { pair: 'BTCUSD',   base: 'BTC',   quote: 'USD', coinId: 'bitcoin'       },
+  { pair: 'ETHUSD',   base: 'ETH',   quote: 'USD', coinId: 'ethereum'      },
+  { pair: 'BNBUSD',   base: 'BNB',   quote: 'USD', coinId: 'binancecoin'   },
+  { pair: 'SOLUSD',   base: 'SOL',   quote: 'USD', coinId: 'solana'        },
+  { pair: 'XRPUSD',   base: 'XRP',   quote: 'USD', coinId: 'ripple'        },
+  { pair: 'ADAUSD',   base: 'ADA',   quote: 'USD', coinId: 'cardano'       },
+  { pair: 'DOGEUSD',  base: 'DOGE',  quote: 'USD', coinId: 'dogecoin'      },
+  { pair: 'DOTUSD',   base: 'DOT',   quote: 'USD', coinId: 'polkadot'      },
+  { pair: 'LTCUSD',   base: 'LTC',   quote: 'USD', coinId: 'litecoin'      },
+  { pair: 'LINKUSD',  base: 'LINK',  quote: 'USD', coinId: 'chainlink'     },
+  { pair: 'UNIUSD',   base: 'UNI',   quote: 'USD', coinId: 'uniswap'       },
+  { pair: 'MATICUSD', base: 'MATIC', quote: 'USD', coinId: 'matic-network' },
+];
 
 /* ================================================================
    STATE — single mutable object
@@ -690,18 +699,19 @@ function fmtTime(d) {
 }
 
 /**
- * Normalize raw Binance 24hr ticker response into a flat object.
- * Binance returns: { lastPrice, bidPrice, askPrice, highPrice, lowPrice, volume }
+ * Normalize a CoinGecko /coins/markets entry into a flat object.
+ * CoinGecko returns: { current_price, high_24h, low_24h, total_volume, ... }
+ * bid/ask are not provided by CoinGecko's free API.
  */
 function normTicker(raw) {
   if (!raw) return null;
   return {
-    last: pf(raw.lastPrice),
-    bid:  pf(raw.bidPrice),
-    ask:  pf(raw.askPrice),
-    high: pf(raw.highPrice),
-    low:  pf(raw.lowPrice),
-    vol:  pf(raw.volume),
+    last: pf(raw.current_price),
+    bid:  null,
+    ask:  null,
+    high: pf(raw.high_24h),
+    low:  pf(raw.low_24h),
+    vol:  pf(raw.total_volume),
   };
 }
 
@@ -827,29 +837,41 @@ async function apiFetch(path) {
   return res.json();
 }
 
-/** Fetch and normalise the full market list from Binance exchangeInfo */
+/** Returns the hardcoded pair list (no network call needed) */
 async function fetchMarkets() {
-  const raw = await apiFetch('/api/v3/exchangeInfo');
-  return (raw.symbols ?? [])
-    .filter(s => s.status === 'TRADING')
-    .map(s => ({ pair: s.symbol, base: s.baseAsset, quote: s.quoteAsset }));
+  return PAIRS.slice(0, CFG.MAX_PAIRS);
 }
 
-/** Fetch ticker for one pair — never throws, returns { pair, data, error } */
-async function fetchTicker(pair) {
+/**
+ * Batch-fetch tickers for all pairs in a single CoinGecko /coins/markets call.
+ * Returns [{ pair, data, error }] in the same order as the input pairs array.
+ */
+async function fetchAllTickers(pairs) {
   try {
-    const data = await apiFetch(`/api/v3/ticker/24hr?symbol=${pair}`);
-    return { pair, data, error: null };
+    const ids  = pairs.map(p => p.coinId).join(',');
+    const list = await apiFetch(
+      `/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=${pairs.length}&page=1`
+    );
+    const byId = {};
+    list.forEach(coin => { byId[coin.id] = coin; });
+    return pairs.map(p => ({
+      pair:  p.pair,
+      data:  byId[p.coinId] ?? null,
+      error: byId[p.coinId] ? null : 'No data',
+    }));
   } catch (e) {
-    return { pair, data: null, error: e.message };
+    return pairs.map(p => ({ pair: p.pair, data: null, error: e.message }));
   }
 }
 
 /** Fetch OHLCV close prices for one pair — never throws */
 async function fetchOHLCV(pair) {
+  const meta = S.pairs.find(p => p.pair === pair);
+  if (!meta?.coinId) return { pair, closes: [] };
   try {
-    // Binance klines: [openTime, open, high, low, close, volume, ...]
-    const raw    = await apiFetch(`/api/v3/klines?symbol=${pair}&interval=${CFG.OHLCV_INTV}&limit=${CFG.OHLCV_PTS}`);
+    // CoinGecko OHLC: [[timestamp, open, high, low, close], ...]
+    // days=1 → 30-min candles (~48 points covering the last 24 h)
+    const raw    = await apiFetch(`/coins/${meta.coinId}/ohlc?vs_currency=usd&days=1`);
     const closes = (Array.isArray(raw) ? raw : [])
       .map(c => pf(c[4]))
       .filter(v => v !== null && v > 0);
@@ -1063,7 +1085,7 @@ function startCountdown() {
    SECTION 7 — DATA REFRESH (tickers only, OHLCV refreshes on load)
 ================================================================ */
 async function refreshTickers() {
-  const results = await Promise.all(S.pairs.map(({ pair }) => fetchTicker(pair)));
+  const results = await fetchAllTickers(S.pairs);
   results.forEach(({ pair, data, error }) => {
     S.tickers[pair] = { data, error };
   });
@@ -1082,26 +1104,16 @@ async function init() {
   const loText = document.querySelector('.lo-text');
 
   try {
-    /* ── 1. Fetch market list ────────────────────────────────── */
-    loSub.textContent = 'FETCHING MARKET LIST…';
-    const markets = await fetchMarkets();
-    if (!markets.length) throw new Error('No markets returned from API');
+    /* ── 1. Load pair list (hardcoded, no network call) ─────── */
+    S.pairs = await fetchMarkets();
+    if (!S.pairs.length) throw new Error('No pairs configured');
 
-    /* Prioritise well-known pairs; fill remaining slots alphabetically */
-    const prefSet  = new Set(CFG.PREFERRED);
-    const ordered  = [
-      ...markets.filter(m => prefSet.has(m.pair)),
-      ...markets.filter(m => !prefSet.has(m.pair)),
-    ].slice(0, CFG.MAX_PAIRS);
-
-    S.pairs = ordered;
-
-    /* ── 2. Parallel fetch: tickers + OHLCV ─────────────────── */
-    loSub.textContent = `LOADING ${S.pairs.length} PAIRS IN PARALLEL…`;
+    /* ── 2. Parallel fetch: tickers (batch) + OHLCV ─────────── */
+    loSub.textContent = `LOADING ${S.pairs.length} PAIRS…`;
     const pairIds = S.pairs.map(p => p.pair);
 
     const [tickerResults, ohlcvResults] = await Promise.all([
-      Promise.all(pairIds.map(fetchTicker)),
+      fetchAllTickers(S.pairs),
       Promise.all(pairIds.map(fetchOHLCV)),
     ]);
 
