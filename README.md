@@ -6,7 +6,7 @@ A single-file, zero-dependency cryptocurrency market dashboard built with plain 
 
 ## Screenshot
 
-> Open `index.html` directly in any modern browser — no build step, no server required.
+<img width="1898" height="863" alt="image" src="https://github.com/user-attachments/assets/d685f2a1-9c7b-49fa-87f3-8d70153e6bbd" />
 
 ---
 
