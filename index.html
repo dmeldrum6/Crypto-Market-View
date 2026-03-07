@@ -7,7 +7,7 @@
 
   <!-- ================================================================
        NEXTERM — Single-file Vanilla JS Crypto Dashboard
-       Data: n.exchange public API (nexchange.io/api/v1/)
+       Data: Binance public API (api.binance.com/api/v3/)
        No external deps, no frameworks, no CDN imports.
   ================================================================ -->
 
@@ -594,9 +594,9 @@
 ================================================================ -->
 <footer id="footer">
   <span>
-    Powered by&nbsp;<a href="https://n.exchange" target="_blank" rel="noopener noreferrer">n.exchange</a>
+    Powered by&nbsp;<a href="https://www.binance.com" target="_blank" rel="noopener noreferrer">Binance</a>
     &nbsp;·&nbsp;
-    API:&nbsp;<a href="https://nexchange.io/api/v1/" target="_blank" rel="noopener noreferrer">nexchange.io/api/v1</a>
+    API:&nbsp;<a href="https://api.binance.com/api/v3/" target="_blank" rel="noopener noreferrer">api.binance.com/api/v3</a>
   </span>
   <span id="countdown">REFRESHING IN 15s</span>
 </footer>
@@ -611,7 +611,7 @@
    CONFIG — tweak these to change behaviour
 ================================================================ */
 const CFG = {
-  API:          'https://nexchange.io/api/v1',
+  API:          'https://api.binance.com',
   MAX_PAIRS:    12,             // how many pairs to track
   REFRESH_SECS: 15,             // ticker auto-refresh interval
   OHLCV_INTV:   '1h',          // OHLCV candle interval
@@ -690,19 +690,18 @@ function fmtTime(d) {
 }
 
 /**
- * Normalize raw ticker API response into a flat object.
- * Handles both { ticker: { last, bid, ask, ... } } and direct flat shapes.
+ * Normalize raw Binance 24hr ticker response into a flat object.
+ * Binance returns: { lastPrice, bidPrice, askPrice, highPrice, lowPrice, volume }
  */
 function normTicker(raw) {
   if (!raw) return null;
-  const t = raw.ticker ?? raw;
   return {
-    last: pf(t.last   ?? t.price   ?? t.close),
-    bid:  pf(t.bid),
-    ask:  pf(t.ask),
-    high: pf(t.high   ?? t.high_24h),
-    low:  pf(t.low    ?? t.low_24h),
-    vol:  pf(t.volume ?? t.volume_24h ?? t.vol),
+    last: pf(raw.lastPrice),
+    bid:  pf(raw.bidPrice),
+    ask:  pf(raw.askPrice),
+    high: pf(raw.highPrice),
+    low:  pf(raw.lowPrice),
+    vol:  pf(raw.volume),
   };
 }
 
@@ -828,23 +827,18 @@ async function apiFetch(path) {
   return res.json();
 }
 
-/** Fetch and normalise the full market list from /market/ */
+/** Fetch and normalise the full market list from Binance exchangeInfo */
 async function fetchMarkets() {
-  const raw  = await apiFetch('/market/');
-  const list = Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []);
-  return list
-    .filter(m => m && (m.pair ?? m.name ?? m.ticker_id))
-    .map(m => ({
-      pair:  m.pair  ?? m.name ?? m.ticker_id,
-      base:  m.base  ?? m.base_currency  ?? '',
-      quote: m.quote ?? m.quote_currency ?? '',
-    }));
+  const raw = await apiFetch('/api/v3/exchangeInfo');
+  return (raw.symbols ?? [])
+    .filter(s => s.status === 'TRADING')
+    .map(s => ({ pair: s.symbol, base: s.baseAsset, quote: s.quoteAsset }));
 }
 
 /** Fetch ticker for one pair — never throws, returns { pair, data, error } */
 async function fetchTicker(pair) {
   try {
-    const data = await apiFetch(`/market/${pair}/ticker/`);
+    const data = await apiFetch(`/api/v3/ticker/24hr?symbol=${pair}`);
     return { pair, data, error: null };
   } catch (e) {
     return { pair, data: null, error: e.message };
@@ -854,15 +848,10 @@ async function fetchTicker(pair) {
 /** Fetch OHLCV close prices for one pair — never throws */
 async function fetchOHLCV(pair) {
   try {
-    const raw     = await apiFetch(`/market/${pair}/ohlcv/?interval=${CFG.OHLCV_INTV}`);
-    const candles = Array.isArray(raw) ? raw : (raw.results ?? raw.data ?? []);
-    const closes  = candles
-      .slice(-CFG.OHLCV_PTS)
-      .map(c => {
-        // Support both array [ts,o,h,l,close,vol] and object formats
-        if (Array.isArray(c)) return pf(c[4]);
-        return pf(c.close ?? c.c ?? null);
-      })
+    // Binance klines: [openTime, open, high, low, close, volume, ...]
+    const raw    = await apiFetch(`/api/v3/klines?symbol=${pair}&interval=${CFG.OHLCV_INTV}&limit=${CFG.OHLCV_PTS}`);
+    const closes = (Array.isArray(raw) ? raw : [])
+      .map(c => pf(c[4]))
       .filter(v => v !== null && v > 0);
     return { pair, closes };
   } catch (_) {
