@@ -706,12 +706,13 @@ function fmtTime(d) {
 function normTicker(raw) {
   if (!raw) return null;
   return {
-    last: pf(raw.current_price),
-    bid:  null,
-    ask:  null,
-    high: pf(raw.high_24h),
-    low:  pf(raw.low_24h),
-    vol:  pf(raw.total_volume),
+    last:   pf(raw.current_price),
+    bid:    null,
+    ask:    null,
+    high:   pf(raw.high_24h),
+    low:    pf(raw.low_24h),
+    vol:    pf(raw.total_volume),
+    pct24h: pf(raw.price_change_percentage_24h), // immediate fallback for % change
   };
 }
 
@@ -944,12 +945,11 @@ function renderSpotlight(pair) {
   document.getElementById('spBid').textContent   = fmtPrice(t.bid);
   document.getElementById('spAsk').textContent   = fmtPrice(t.ask);
 
-  // Price change % — derived from first OHLCV close vs current last
+  // Price change %: use OHLCV closes when available, else CoinGecko's 24h field
   const closes = S.ohlcv[pair] ?? [];
-  let pct = null;
-  if (closes.length >= 2 && t.last !== null) {
-    pct = pctChg(closes[0], t.last);
-  }
+  let pct = (closes.length >= 2 && t.last !== null)
+    ? pctChg(closes[0], t.last)
+    : t.pct24h;
   const { text, cls } = fmtPct(pct);
   const chgEl = document.getElementById('spChange');
   chgEl.textContent = text;
@@ -996,11 +996,10 @@ function buildCard({ pair, base, quote }) {
     return { card, isNew };
   }
 
-  // Compute % change
-  let pct = null;
-  if (closes.length >= 2 && t.last !== null) {
-    pct = pctChg(closes[0], t.last);
-  }
+  // Compute % change: use OHLCV closes when available, else CoinGecko's 24h field
+  const pct = (closes.length >= 2 && t.last !== null)
+    ? pctChg(closes[0], t.last)
+    : t.pct24h;
   const { text: chgText, cls: chgCls } = fmtPct(pct);
 
   // Mini sparkline (last 20 candles, no fill)
@@ -1108,34 +1107,21 @@ async function init() {
     S.pairs = await fetchMarkets();
     if (!S.pairs.length) throw new Error('No pairs configured');
 
-    /* ── 2. Parallel fetch: tickers (batch) + OHLCV ─────────── */
-    loSub.textContent = `LOADING ${S.pairs.length} PAIRS…`;
-    const pairIds = S.pairs.map(p => p.pair);
-
-    const [tickerResults, ohlcvResults] = await Promise.all([
-      fetchAllTickers(S.pairs),
-      Promise.all(pairIds.map(fetchOHLCV)),
-    ]);
-
+    /* ── 2. Batch-fetch all tickers in ONE request ───────────── */
+    loSub.textContent = `LOADING MARKET DATA…`;
+    const tickerResults = await fetchAllTickers(S.pairs);
     tickerResults.forEach(({ pair, data, error }) => {
       S.tickers[pair] = { data, error };
     });
-    ohlcvResults.forEach(({ pair, closes }) => {
-      S.ohlcv[pair] = closes;
-    });
 
-    /* ── 3. Render UI ────────────────────────────────────────── */
+    /* ── 3. Render UI immediately — % change from ticker data ── */
     renderPills();
     renderGrid();
-
-    /* Auto-select first pair for the spotlight */
     if (S.pairs.length > 0) selectPair(S.pairs[0].pair);
-
-    /* ── 4. Stamp last-refresh time ──────────────────────────── */
     document.getElementById('lastRefresh').textContent =
       `LAST UPDATE: ${fmtTime(new Date())}`;
 
-    /* ── 5. Start auto-refresh loop ──────────────────────────── */
+    /* ── 4. Start auto-refresh loop ──────────────────────────── */
     startCountdown();
     S.timers.refresh = setInterval(async () => {
       await refreshTickers();
@@ -1157,6 +1143,16 @@ async function init() {
   const overlay = document.getElementById('loadingOverlay');
   overlay.classList.add('hidden');
   setTimeout(() => overlay.remove(), 600);
+
+  /* ── 5. Fetch sparkline OHLCV in background, staggered ───── */
+  /* Sequential with 250 ms gaps → ~3 req/s, well within free limits */
+  for (const meta of S.pairs) {
+    const { pair, closes } = await fetchOHLCV(meta.pair);
+    S.ohlcv[pair] = closes;
+    buildCard(meta);                                  // refresh sparkline in card
+    if (S.selectedPair === pair) renderSpotlight(pair); // refresh spotlight chart
+    await new Promise(r => setTimeout(r, 250));
+  }
 }
 
 /* ── Kick everything off ──────────────────────────────────────── */
